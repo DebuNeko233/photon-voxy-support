@@ -2,8 +2,21 @@
 #define INCLUDE_MISC_LOD_MOD_SUPPORT
 
 /*
- * Utility include for LoD mod support (Distant Horizons and Voxy)
+ * Utility include for LoD mod support (Distant Horizons and Voxy).
+ *
+ * Native Vulkan Voxy under Vitrail does not pass through Iris' Voxy patcher, so
+ * the usual VOXY engine define and vxDepthTex/vxProj uniforms do not exist.
+ * This dedicated Photon fork therefore has a third LoD transport: Voxy writes
+ * forward depth into colortex17.r and its classic vxRenderDistance-equivalent
+ * value into colortex17.g.  A cleared bridge is (1, 0), which behaves as no LoD
+ * terrain until the native renderer has opened the frame.
  */
+#if !defined DISTANT_HORIZONS && !defined VOXY
+#define VOXY_NATIVE_VULKAN_VITRAIL
+#ifndef LOD_MOD_ACTIVE
+#define LOD_MOD_ACTIVE
+#endif
+#endif
 
 #if defined DISTANT_HORIZONS
 // --------------------
@@ -60,9 +73,9 @@ uniform vec4 combined_projection_matrix_inverse_3;
         combined_projection_matrix_inverse_3 \
     )
 #elif defined VOXY
-// --------
-//   Voxy
-// --------
+// -----------------------
+//   Voxy (Iris / classic)
+// -----------------------
 
 uniform sampler2D colortex15;
 
@@ -119,6 +132,96 @@ mat4 combined_projection_matrix_inverse = mat4(
 #define lod_projection_matrix_inverse vxProjInv
 #define lod_previous_projection_matrix vxProjPrev
 #define lod_render_distance (vxRenderDistance * 16)
+#elif defined VOXY_NATIVE_VULKAN_VITRAIL
+// ----------------------------------
+//   Voxy (native Vulkan + Vitrail)
+// ----------------------------------
+
+uniform sampler2D colortex15;
+uniform sampler2D colortex17;
+
+// Matches VoxyUniforms' classic Iris contract: vxRenderDistance is
+// round(sectionRenderDistance * 32), and Photon turns it into blocks by *16.
+float voxy_native_render_distance_chunks() {
+    return max(texelFetch(colortex17, ivec2(0), 0).g, 0.0);
+}
+
+float voxy_native_render_distance_blocks() {
+    float chunks = voxy_native_render_distance_chunks();
+    return chunks > 0.0 ? chunks * 16.0 : far;
+}
+
+// VkRenderCore uses the same projection policy as the classic renderer: a 16
+// block near plane (8 only at the pathological two-chunk vanilla distance) and
+// a fixed 3000-chunk projection far plane.  colortex17 stores a forward 0..1
+// depth even when Minecraft/Voxy rasterise reverse-Z, so Photon can keep using
+// its ordinary OpenGL-style screen-depth reconstruction.
+float voxy_native_projection_near() {
+    return far <= 32.0 ? 8.0 : 16.0;
+}
+
+const float voxy_native_projection_far = 16.0 * 3000.0;
+
+mat4 voxy_native_projection(float projection_near, float projection_far) {
+    return mat4(
+        vec4(gbufferProjection[0][0], 0.0, 0.0, 0.0),
+        vec4(0.0, gbufferProjection[1][1], 0.0, 0.0),
+        vec4(
+            gbufferProjection[2][0],
+            gbufferProjection[2][1],
+            (projection_far + projection_near) / (projection_near - projection_far),
+            -1.0
+        ),
+        vec4(
+            0.0,
+            0.0,
+            (2.0 * projection_far * projection_near) / (projection_near - projection_far),
+            0.0
+        )
+    );
+}
+
+mat4 voxy_native_projection_inverse(float projection_near, float projection_far) {
+    return mat4(
+        vec4(gbufferProjectionInverse[0][0], 0.0, 0.0, 0.0),
+        vec4(0.0, gbufferProjectionInverse[1][1], 0.0, 0.0),
+        vec4(
+            0.0,
+            0.0,
+            0.0,
+            -(projection_far - projection_near)
+                / (2.0 * projection_far * projection_near)
+        ),
+        vec4(
+            gbufferProjectionInverse[3][0],
+            gbufferProjectionInverse[3][1],
+            -1.0,
+            (projection_far + projection_near)
+                / (2.0 * projection_far * projection_near)
+        )
+    );
+}
+
+#define combined_near near
+#define combined_far voxy_native_render_distance_blocks()
+#define combined_depth_tex colortex15
+#define lod_depth_tex colortex17
+#define lod_depth_tex_solid colortex17
+#define lod_depth_tex_shading colortex17
+#define lod_depth_tex_scale 1.0
+#define lod_projection_matrix \
+    voxy_native_projection(voxy_native_projection_near(), voxy_native_projection_far)
+#define lod_projection_matrix_inverse \
+    voxy_native_projection_inverse(voxy_native_projection_near(), voxy_native_projection_far)
+// Vitrail already carries previous camera/model-view state. Projection changes
+// are rare; use the current Voxy projection until a native previous-projection
+// transport is added.
+#define lod_previous_projection_matrix lod_projection_matrix
+#define lod_render_distance voxy_native_render_distance_blocks()
+#define combined_projection_matrix \
+    voxy_native_projection(combined_near, combined_far)
+#define combined_projection_matrix_inverse \
+    voxy_native_projection_inverse(combined_near, combined_far)
 #else
 #define combined_near near
 #define combined_far far
