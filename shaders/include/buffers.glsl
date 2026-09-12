@@ -18,6 +18,12 @@ const int colortex13Format = RGBA16F;        // full res    | rendered transluce
 const int colortex14Format = RG16F;          // quarter res | ambient occlusion history data (always)
 const int colortex15Format = R32F;           // full res    | LoD combined depth buffer (d1 -> c2)
 
+// Native Vulkan Voxy + Vitrail bridge. R is Voxy forward depth. G is the
+// classic vxRenderDistance-equivalent value (round(sectionRenderDistance * 32)).
+// Voxy refreshes both every frame before Photon consumes the LoD depth. A clear
+// value of (1, 0) is a safe "no native Voxy this frame" state.
+const int colortex17Format = RG32F;
+
 const bool colortex0Clear  = true;
 const bool colortex1Clear  = false;
 const bool colortex2Clear  = false;
@@ -34,10 +40,12 @@ const bool colortex12Clear = false;
 const bool colortex13Clear = true;
 const bool colortex14Clear = false;
 const bool colortex15Clear = false;
+const bool colortex17Clear = true;
 
 const vec4 colortex0ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 const vec4 colortex3ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 const vec4 colortex13ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
+const vec4 colortex17ClearColor = vec4(1.0, 0.0, 0.0, 0.0);
 const vec4 shadowcolor0ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 
 #ifdef VOXY 
